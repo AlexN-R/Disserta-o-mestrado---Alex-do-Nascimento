@@ -1,0 +1,302 @@
+//CONSTANTES
+double tempo_max= 400;
+//tempo máximo para acionamento de transistores. EM ms$
+//VARIÁVEIS $
+double lol = 0;
+unsigned long to;
+unsigned long tf;
+unsigned long dt;
+unsigned long dt_s;
+unsigned long t_so=0;
+unsigned long t_sf=0;
+double tempo_tr= 0; //tempo de acionamento de transistores.
+unsigned long W=0;
+unsigned long RPM=0;
+byte hall_sensor = 0; //Palavra de 8bits que acumula os valores dos sensores Hall
+int estado_sensor = 0;//Constante que simboliza que sensores hall estão ativados
+int estado_sensor_anterior = 0; //Constante que simboliza que sensores hall estavam //ativados
+int estado_transistor = 0; //Constante que simboliza quais transistores estão ativados
+int estado_transistor_anterior = 0; //Constante que simboliza quais transistores estavam
+//ativados no último loop
+int chamadas=0;
+int medidor_estado=0; // Constante que representa os estados da máquina de estado
+int debug=0;
+int C=5;
+//Variáveis de estado e transição
+volatile byte start = LOW; //Variavel binária inicia a partida do motor
+volatile byte pausa = LOW; //Variavel binária que pausa motor
+volatile byte parada = LOW;
+//Variáveis de rotação
+int cont_borda=0;
+int contador=0;
+int contador_volta=0;
+int marcador_volta=0;
+int tempo_amostra=1000; // tempo entre as mudanças de saídas de rotação
+int n_d=10; //número de dentes
+int n=500; //número de pontos
+int i=0;
+int j=0; //variáveis de navegação de vetor
+int t_parada=1000; //Tempo máximo de parada de medição
+unsigned long tp_i=0;
+unsigned long tp_f=0;
+unsigned long t_low=0;
+//unsigned long t_parada_f=0;
+unsigned long DeltaT=0;
+//unsigned long DeltaTA=0;
+unsigned long matriz_T[500];
+//unsigned long myInts2[9];
+float T_soma=0.000;
+float T_med=0.000;
+float T_ant=0.000;
+float F=0.000;
+float F_rpm=0.00;
+float F_saida=0.000;
+float F_rpm_saida=0.000;
+//Varáveis de rotação
+int T_a=0; //saída porta analógica
+int pwm_cont=0;
+int T_pwm_max=5;
+//Pinos usados
+//int P_HAN=2;
+//int P_HAS=3;
+//int P_HBN=4;
+//int P_HBS=5;
+//int P_HCN=6;
+//int P_HCS=7;
+int pino_AH=33; //PINOS QUE ATIVAM OS TRANSISTORES
+int pino_AL=31;
+int pino_BH=29;
+int pino_BL=27;
+int pino_CH=25;
+int pino_CL=23;
+int pino_start=48; //PINO DA VARIÁVEL START
+int pino_stop=50; //PINO DA VARIÁVEL PARADA
+int Dir=18; //PINO DE VARIÁVEL DE DIREÇÃO DE ROTAÇÃO
+//Estados
+enum estados_enum {REPOUSO, PARTIDA, E1, E2, E3, E4, E5, E6}; //DEFINIÇÃO DOS ESTADOS
+enum estados_enum estado = REPOUSO; //DEFINIÇÃO DO ESTADO INICIAL
+//Início do Loop
+void setup() {
+Serial.begin(2000000);
+attachInterrupt(digitalPinToInterrupt(20), f_botao_partida, RISING); // pino de interrupção para partida
+attachInterrupt(digitalPinToInterrupt(19), f_parada, RISING); // pino de interrupção para partida
+pinMode(pino_AH, OUTPUT); // pinos de acionamento de transistores
+pinMode(pino_AL, OUTPUT);
+pinMode(pino_BH, OUTPUT);
+pinMode(pino_BL, OUTPUT);
+pinMode(pino_CH, OUTPUT);
+pinMode(pino_CL, OUTPUT);
+pinMode(pino_start, INPUT);
+pinMode(pino_stop, INPUT);
+pinMode(Dir, INPUT);
+}
+void loop() {
+to = tf; // Instante inicial do loop anterior
+tf = millis(); // Instante inicial desse loop
+dt = tf-to; // diferença de tempo entre loop
+estado_sensor_anterior = estado_sensor;
+//APLICAÇÃO DO ALGORITMO DO VELOCIMETRO
+digitalWrite(A7,HIGH);
+if ( (digitalRead(6)==HIGH) && (cont_borda==0))
+{
+cont_borda=1;
+digitalWrite(A6,HIGH);
+//T_soma=0;
+tp_i=tp_f; // Instante do borda anterior
+tp_f=millis(); // Instante da borda atual
+DeltaT=tp_f-tp_i; //Periodo do último pulso
+if(DeltaT < 2*T_ant){
+marcador_volta=0;
+T_ant = DeltaT;
+T_soma += DeltaT ;
+T_soma -= matriz_T[i];
+//matriz_T[i]=T_1;
+matriz_T[i]=DeltaT;
+i+=1;
+}
+else{ marcador_volta=1;
+T_ant=DeltaT;
+contador_volta+=1;
+}
+if(i==n){i=0;}
+F=(n*1000.000)/(T_soma*n_d);
+F_rpm=60.00*F;
+}
+else if(digitalRead(6)==LOW) {
+digitalWrite(A6,LOW);
+cont_borda=0;
+t_low=millis(); ///tempo em que a entrada fica em valor baixo
+if( (t_low-tp_f) > t_parada){F=0;F_rpm=0;}
+}
+digitalWrite(A7,LOW);
+j+=1;
+if(j>=tempo_amostra){
+F_saida=F;
+F_rpm_saida=F_rpm;
+j=0;}
+//Aplicação do PWM
+T_a=analogRead(A9)/200;
+pwm_cont+=1;
+if(pwm_cont>=T_pwm_max){pwm_cont=0;};
+if(pwm_cont>=T_a){
+digitalWrite(A4,LOW);
+}
+else {
+digitalWrite(A4,HIGH);
+}
+//NAVEGAÇÃO PELOS ESTADOS, SÓ SÃO USADOS TRÊS ESTADOS: REPOUSO, PARTIDA E /OPERAÇÃO
+switch(estado){
+case REPOUSO:
+// O repouso deve zerar a maioria das constante e desligar os transistores
+medidor_estado=0;
+tempo_tr=0;
+chamadas =0;
+//Desliga os transistores
+digitalWrite(pino_AH,LOW);
+digitalWrite(pino_AL,LOW);
+digitalWrite(pino_BH,LOW);
+digitalWrite(pino_BL,LOW);
+digitalWrite(pino_CH,LOW);
+digitalWrite(pino_CL,LOW);
+estado_transistor = 0 ;
+if(start == HIGH){
+estado = E1;
+digitalWrite(pino_AL,HIGH);
+digitalWrite(pino_BL,HIGH);
+digitalWrite(pino_CL,HIGH);
+delay(40);
+digitalWrite(pino_AL,LOW);
+digitalWrite(pino_BL,LOW);
+digitalWrite(pino_CL,LOW);
+start=LOW ;
+}
+start=LOW ;
+pausa = LOW;
+break;
+case E1:
+//O estado de operação aciona cada transistores de acordo com os valores dos sensores hall, mas leva
+//em consideração apenas os valores críticos
+//O estado de operação também deve monitorar quanto tempo que os transistores estão ligados,
+//se um limite for ultrapassado eles devem ser desligados
+bitWrite(hall_sensor , 2 ,digitalRead(6) ) ;
+bitWrite(hall_sensor , 1 ,digitalRead(4) ) ;
+bitWrite(hall_sensor , 0 ,digitalRead(5) ) ;
+if (hall_sensor == B00000101) {estado_sensor=1;}
+else if(hall_sensor == B00000100) {estado_sensor=2;}
+else if(hall_sensor == B00000110) {estado_sensor=3;}
+else if(hall_sensor == B00000010) {estado_sensor=4;}
+else if(hall_sensor == B00000011) {estado_sensor=5;}
+else if(hall_sensor == B00000001) {estado_sensor=6;}
+else{estado_sensor=0;}
+start=LOW ;
+medidor_estado=1;
+f_de_operacao( hall_sensor , estado_sensor ); //chama a função de operação
+// Acumula mais tempo na contagem de tempo de acionamento dos transistores
+if((estado_transistor_anterior > 0)&&( estado_transistor == estado_transistor_anterior )){
+tempo_tr = tempo_tr + dt;
+chamadas = chamadas+1;
+}
+//Caso haja uma transisção nos transistores acionados, a contagem deve ser zerada
+else{tempo_tr = 0;chamadas =0;}
+// se o tempo de acionamento for grande demais, a máquina deve voltar para o repouso
+if( tempo_tr >= tempo_max ){ estado = REPOUSO;}
+//Se o botão de pausa for apertado, a constante 'PAUSA' assume valor lógico alto e a máquina volta para repouso
+if(pausa == HIGH){
+estado = REPOUSO;
+pausa=LOW ;
+}
+estado_transistor_anterior = estado_transistor;
+break;
+};
+//Funções
+void f_de_operacao( byte hall_sensor , int estado_sensor ){
+//A função de operação leva em conta só as posições criticas e faz a comutação de transistores com mais cuidado
+if( digitalRead(Dir) == 1 ){//Direção anti-horária
+switch(estado_sensor){
+//Em cada caso um par de transistores é acionado, um par de transistores que poderia estar acionado em um estado anterior //e ,por preocaução, o par de transistores complementar é desligado também
+case 1 :
+digitalWrite(pino_AH,HIGH);digitalWrite(pino_BL,HIGH);
+digitalWrite(pino_CH,LOW); digitalWrite(pino_CL,LOW);
+digitalWrite(pino_BH,LOW); digitalWrite(pino_AL,LOW);
+estado_transistor = 1;
+break;
+case 2 :
+digitalWrite(pino_AH,HIGH);digitalWrite(pino_CL,HIGH);
+digitalWrite(pino_BH,LOW);digitalWrite(pino_BL,LOW);
+digitalWrite(pino_CH,LOW); digitalWrite(pino_AL,LOW);
+estado_transistor = 2;
+break;
+case 3 :
+digitalWrite(pino_BH,HIGH);digitalWrite(pino_CL,HIGH);
+digitalWrite(pino_AH,LOW);digitalWrite(pino_AL,LOW);
+digitalWrite(pino_CH,LOW); digitalWrite(pino_BL,LOW);
+estado_transistor = 3;
+break;
+case 4 :
+digitalWrite(pino_BH,HIGH);digitalWrite(pino_AL,HIGH);
+digitalWrite(pino_CH,LOW);digitalWrite(pino_CL,LOW);
+digitalWrite(pino_AH,LOW); digitalWrite(pino_BL,LOW);
+estado_transistor = 4;
+break;
+case 5 :
+digitalWrite(pino_CH,HIGH);digitalWrite(pino_AL,HIGH);
+digitalWrite(pino_BH,LOW);digitalWrite(pino_BL,LOW);
+digitalWrite(pino_AH,LOW); digitalWrite(pino_CL,LOW);
+estado_transistor = 5;
+break;
+case 6 :
+digitalWrite(pino_CH,HIGH);digitalWrite(pino_BL,HIGH);
+digitalWrite(pino_AH,LOW);digitalWrite(pino_AL,LOW);
+digitalWrite(pino_BH,LOW); digitalWrite(pino_CL,LOW);
+estado_transistor = 6;
+break;
+}
+}
+if( digitalRead(Dir) == 0 ){
+switch(estado_sensor){
+case 1 :
+digitalWrite(pino_AH,HIGH);digitalWrite(pino_CL,HIGH);
+digitalWrite(pino_BH,LOW);digitalWrite(pino_BL,LOW);
+digitalWrite(pino_CH,LOW); digitalWrite(pino_AL,LOW);
+estado_transistor = 2 ;
+break;
+case 2 :
+digitalWrite(pino_BH,HIGH);digitalWrite(pino_CL,HIGH);
+digitalWrite(pino_AH,LOW);digitalWrite(pino_AL,LOW);
+digitalWrite(pino_CH,LOW); digitalWrite(pino_BL,LOW);
+estado_transistor = 3 ;
+break;
+case 3 :
+digitalWrite(pino_BH,HIGH);digitalWrite(pino_AL,HIGH);
+digitalWrite(pino_CH,LOW);digitalWrite(pino_CL,LOW);
+digitalWrite(pino_AH,LOW); digitalWrite(pino_BL,LOW);
+estado_transistor = 4 ;
+break;
+case 4 :
+digitalWrite(pino_CH,HIGH);digitalWrite(pino_AL,HIGH);
+digitalWrite(pino_BH,LOW);digitalWrite(pino_BL,LOW);
+digitalWrite(pino_AH,LOW); digitalWrite(pino_CL,LOW);
+estado_transistor = 5 ;
+break;
+case 5 :
+digitalWrite(pino_CH,HIGH);digitalWrite(pino_BL,HIGH);
+digitalWrite(pino_AH,LOW);digitalWrite(pino_AL,LOW);
+digitalWrite(pino_BH,LOW); digitalWrite(pino_CL,LOW);
+estado_transistor = 6 ;
+break;
+case 6 :
+digitalWrite(pino_AH,HIGH);digitalWrite(pino_BL,HIGH);
+digitalWrite(pino_CH,LOW);digitalWrite(pino_CL,LOW);
+digitalWrite(pino_BH,LOW); digitalWrite(pino_AL,LOW);
+estado_transistor = 1 ;
+break;
+}
+}
+//return estado_transistor;
+};
+void f_parada(){ //função de interrupção para desligamento
+pausa = HIGH;
+};
+void f_botao_partida(){ //função de interrupção para desligamento
+start = HIGH;
+}
